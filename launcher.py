@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -17,6 +18,11 @@ from typing import List
 ROOT = Path(__file__).resolve().parent
 PID_DIR = ROOT / ".launcher"
 LOG_DIR = ROOT / "logs"
+LOG_TARGETS = {
+    "backend": LOG_DIR / "backend.log",
+    "frontend": LOG_DIR / "frontend.log",
+    "tests": LOG_DIR / "tests.log",
+}
 
 
 def ensure_dirs() -> None:
@@ -173,6 +179,50 @@ def handle_tests(_: argparse.Namespace) -> None:
         sys.exit(rc)
 
 
+def run_update_pipeline() -> int:
+    script = ROOT / "scripts" / "update_repo.sh"
+    if not script.exists():
+        print("scripts/update_repo.sh no encontrado.", file=sys.stderr)
+        return 1
+    bash_path = shutil.which("bash")
+    if not bash_path:
+        print("Bash no está disponible en PATH. Ejecuta el script directamente en la Raspberry Pi.", file=sys.stderr)
+        return 1
+    print(f"Ejecutando script de actualización: {script}")
+    result = subprocess.run([bash_path, str(script)], cwd=str(ROOT), check=False)
+    if result.returncode == 0:
+        print("Actualización completada correctamente.")
+    return result.returncode
+
+
+def handle_update(_: argparse.Namespace) -> None:
+    rc = run_update_pipeline()
+    if rc != 0:
+        sys.exit(rc)
+
+
+def clear_logs(target: str) -> None:
+    ensure_dirs()
+    if target == "all":
+        files = list(LOG_DIR.glob("*.log"))
+    else:
+        files = [LOG_TARGETS.get(target, LOG_DIR / f"{target}.log")]
+
+    removed = []
+    for file in files:
+        if file.exists():
+            file.unlink()
+            removed.append(file.name)
+    if removed:
+        print("Se eliminaron los logs:", ", ".join(sorted(removed)))
+    else:
+        print("No se encontraron logs para borrar.")
+
+
+def handle_clear_logs(args: argparse.Namespace) -> None:
+    clear_logs(args.target)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Launcher for Pi Admin backend/frontend.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -192,6 +242,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     tests = sub.add_parser("tests", help="Run backend test suite (pytest)")
     tests.set_defaults(func=handle_tests)
+
+    update = sub.add_parser("update", help="Update repository and rebuild services")
+    update.set_defaults(func=handle_update)
+
+    clear_logs_cmd = sub.add_parser("clear-logs", help="Delete launcher log files")
+    clear_logs_cmd.add_argument(
+        "--target",
+        default="all",
+        choices=["backend", "frontend", "tests", "all"],
+        help="Which log to delete (default: all)",
+    )
+    clear_logs_cmd.set_defaults(func=handle_clear_logs)
 
     return parser
 

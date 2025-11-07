@@ -12,17 +12,15 @@ import Terminal from "@/pages/Terminal";
 import { getToken } from "@/lib/api";
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(Boolean(getToken()));
 
-  // Temporarily bypass authentication
-  // const [isAuthenticated, setIsAuthenticated] = useState<boolean>(Boolean(getToken()));
-  // useEffect(() => {
-  //   setIsAuthenticated(Boolean(getToken()));
-  // }, []);
+  useEffect(() => {
+    setIsAuthenticated(Boolean(getToken()));
+  }, []);
 
-  // if (!isAuthenticated) {
-  //   return <Login onOk={() => setIsAuthenticated(true)} />;
-  // }
+  if (!isAuthenticated) {
+    return <Login onOk={() => setIsAuthenticated(true)} />;
+  }
 
   return (
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>

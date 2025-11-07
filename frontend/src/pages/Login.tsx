@@ -16,11 +16,11 @@ export default function Login({ onOk }: LoginProps) {
     setLoading(true);
     setError("");
     try {
-      const { data } = await http.post("/auth/login", {
+      const { data } = await http.post<{ token: string; role: string }>("/auth/login", {
         username,
         password
       });
-      setToken(data.token);
+      setToken(data.token, data.role);
       onOk();
     } catch (err: any) {
       const msg = err?.response?.data?.detail || err?.message || "Error desconocido";

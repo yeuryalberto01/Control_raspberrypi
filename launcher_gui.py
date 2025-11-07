@@ -55,6 +55,8 @@ class LauncherGUI(tk.Tk):
         tk.Button(btn_frame, text="Detener Frontend", width=18, command=lambda: self.run_async(["stop", "frontend"])).grid(row=1, column=1, padx=5, pady=5)
         tk.Button(btn_frame, text="Actualizar estado", width=18, command=self.refresh_status).grid(row=2, column=0, pady=(5, 0))
         tk.Button(btn_frame, text="Ejecutar tests", width=18, command=lambda: self.run_async(["tests"])).grid(row=2, column=1, pady=(5, 0))
+        tk.Button(btn_frame, text="Borrar logs", width=18, command=self.confirm_clear_logs).grid(row=3, column=0, columnspan=2, pady=(10, 0))
+        tk.Button(btn_frame, text="Actualizar repositorio", width=22, command=self.confirm_update_repo).grid(row=4, column=0, columnspan=2, pady=(5, 0))
 
         tk.Label(self, textvariable=self.status_var, anchor="w").pack(fill="x", padx=12)
 
@@ -76,6 +78,18 @@ class LauncherGUI(tk.Tk):
         if rc != 0:
             messagebox.showwarning("Launcher", f"El comando terminó con código {rc}")
 
+    def confirm_clear_logs(self) -> None:
+        if messagebox.askyesno("Borrar logs", "¿Deseas borrar todos los logs del launcher?"):
+            self.run_async(["clear-logs"])
+
+    def confirm_update_repo(self) -> None:
+        if messagebox.askyesno(
+            "Actualizar repositorio",
+            "¿Descargar la última versión, reinstalar dependencias y recompilar el frontend?\n"
+            "El backend se reiniciará si existe el servicio systemd.",
+        ):
+            self.run_async(["update"])
+
     def refresh_status(self) -> None:
         rc, output = run_launcher_command(["status"])
         if rc == 0:
@@ -84,6 +98,7 @@ class LauncherGUI(tk.Tk):
             self.status_var.set("Error al consultar estado")
 
     def refresh_logs(self) -> None:
+        LOG_DIR.mkdir(exist_ok=True)
         log_path = LOG_DIR / "backend.log"
         text = ""
         if log_path.exists():
@@ -93,7 +108,7 @@ class LauncherGUI(tk.Tk):
                 text = "(No se pudo leer backend.log)"
         self.log_text.config(state="normal")
         self.log_text.delete("1.0", tk.END)
-        self.log_text.insert(tk.END, text or "Sin logs aún...")
+        self.log_text.insert(tk.END, text or "Sin logs por ahora...")
         self.log_text.config(state="disabled")
 
 

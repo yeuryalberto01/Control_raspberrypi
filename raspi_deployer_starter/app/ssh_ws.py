@@ -7,11 +7,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
 from starlette.websockets import WebSocketState
 
-# from .auth import require_role  # Disabled for local use
-# from .schemas import User  # Disabled for local use
+from .auth import validate_token
 from . import ssh_manager
 
 logging.basicConfig(level=logging.INFO)
@@ -20,16 +19,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _extract_token(value: str | None) -> str | None:
+    if not value:
+        return None
+    token = value.strip()
+    if token.lower().startswith("bearer "):
+        token = token.split(" ", 1)[1].strip()
+    return token or None
+
+
 @router.websocket("/{device_id}/ws")
 async def ssh_websocket_endpoint(
     websocket: WebSocket,
     device_id: str,
-    # current_user: User = Depends(get_current_active_user),  # Disabled for local use
 ):
     """
     Handles a WebSocket connection to stream an interactive SSH shell for a
     specific device.
     """
+    raw_token = _extract_token(websocket.query_params.get("token"))
+    if not validate_token(raw_token, required="admin"):
+        logger.warning("SSH websocket rejected for device %s due to invalid token.", device_id)
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     await websocket.accept()
 
     try:

@@ -6,10 +6,11 @@ import "@xterm/xterm/css/xterm.css";
 
 import { openWs } from "@/lib/ws";
 import { useActiveDevice } from "@/lib/hooks";
+import { getRole, getToken } from "@/lib/api";
 
 export default function Terminal() {
   const termRef = useRef<HTMLDivElement | null>(null);
-  const { isLocal } = useActiveDevice();
+  const { activeDeviceId, isLocal } = useActiveDevice();
 
   useEffect(() => {
     if (!termRef.current) {
@@ -37,17 +38,32 @@ export default function Terminal() {
     const handleResize = () => fitAddon.fit();
     window.addEventListener("resize", handleResize);
 
+    const cleanup = () => {
+      window.removeEventListener("resize", handleResize);
+      term.dispose();
+    };
+
+    const role = getRole();
+    if (role !== "admin") {
+      term.writeln("Solo los administradores pueden usar el terminal.");
+      return cleanup;
+    }
+
+    const token = getToken();
+    if (!token) {
+      term.writeln("Sesión no válida. Inicia sesión para continuar.");
+      return cleanup;
+    }
+
     if (!isLocal) {
       term.writeln("SSH Terminal is only available for the local device.");
-      return () => {
-        window.removeEventListener("resize", handleResize);
-        term.dispose();
-      };
+      return cleanup;
     }
 
     term.writeln("Connecting to SSH...");
 
-    const ws = openWs("/ssh/ws");
+    const targetDevice = encodeURIComponent(activeDeviceId || "local");
+    const ws = openWs(`/ssh/${targetDevice}/ws`);
 
     ws.onopen = () => {
       term.writeln("\x1b[32mConnection established.\x1b[0m");
@@ -74,10 +90,9 @@ export default function Terminal() {
 
     return () => {
       ws.close();
-      term.dispose();
-      window.removeEventListener("resize", handleResize);
+      cleanup();
     };
-  }, [isLocal]);
+  }, [activeDeviceId, isLocal]);
 
   return <div ref={termRef} className="h-full w-full" />;
 }
