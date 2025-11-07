@@ -12,6 +12,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import List
 
@@ -68,15 +69,30 @@ def run_process(name: str, command: List[str], cwd: Path) -> None:
         sys.exit(1)
 
     log_path = LOG_DIR / f"{name}.log"
-    log_file = log_path.open("ab")
-    proc = subprocess.Popen(
-        command,
-        cwd=str(cwd),
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        text=False,
-        env=os.environ.copy(),
-    )
+    with log_path.open("ab") as log_file:
+        proc = subprocess.Popen(
+            command,
+            cwd=str(cwd),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=False,
+            env=os.environ.copy(),
+        )
+
+    # Give the child process a moment to fail fast (missing deps, syntax errors, etc.)
+    time.sleep(1)
+    if proc.poll() is not None:
+        tail = ""
+        if log_path.exists():
+            tail_lines = log_path.read_text(errors="ignore").splitlines()[-20:]
+            if tail_lines:
+                tail = "\n".join(tail_lines)
+        print(f"{name} failed to start (exit code {proc.returncode}). Revisa {log_path} para detalles.", file=sys.stderr)
+        if tail:
+            print("--- Log tail ---", file=sys.stderr)
+            print(tail, file=sys.stderr)
+        sys.exit(proc.returncode or 1)
+
     write_pid(name, proc.pid)
     print(f"{name} started (PID {proc.pid}). Logs -> {log_path}")
 
