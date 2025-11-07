@@ -1,0 +1,15 @@
+.venv/
+node_modules/
+dist/
+build/
+.DS_Store
+*.log
+*.sqlite3
+.env
+.env.*
+*.pyc
+*.pyo
+__pycache__/
+.pytest_cache/
+raspi_deployer_starter/.env
+frontend/.env

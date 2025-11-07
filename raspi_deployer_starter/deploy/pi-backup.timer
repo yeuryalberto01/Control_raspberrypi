@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=pi-backup.service
+
+[Install]
+WantedBy=timers.target

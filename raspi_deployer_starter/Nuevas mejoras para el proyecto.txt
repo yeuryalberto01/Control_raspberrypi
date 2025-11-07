@@ -1,0 +1,555 @@
+¡Vamos a dejarlo **PRO** de verdad, Yeury!
+Este es el **Paquete #5 (Hardening + Observabilidad + QA + Operación)**. Trae:
+
+* Endurecimiento de seguridad (JWT rotables, bloqueo por intentos, IP allowlist, headers, firewall, fail2ban, systemd hardening).
+* Observabilidad (Prometheus endpoint + métricas de latencia/errores + dashboards opcionales).
+* QA y resiliencia (pytest, Playwright, k6, chaos test).
+* Backups automáticos con retención.
+* Runbooks y checklist operativa.
+
+Al final te digo el **%**.
+
+---
+
+# 0) Dependencias nuevas
+
+**requirements.txt (añade)**
+
+```
+passlib[bcrypt]
+prometheus_client
+```
+
+---
+
+# 1) Seguridad PRO
+
+## 1.1 JWT rotables + password hashing + bloqueo por intentos
+
+**app/auth.py**
+
+```python
+import os, time, jwt, hashlib, hmac
+from typing import Literal, Optional
+from passlib.context import CryptContext
+
+JWT_SECRET = os.getenv("JWT_SECRET", "CHANGE_ME")
+JWT_ALG = "HS256"
+ACCESS_TTL = int(os.getenv("JWT_ACCESS_TTL", "900"))      # 15 min
+REFRESH_TTL = int(os.getenv("JWT_REFRESH_TTL", "2592000"))# 30 días
+
+pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Usuarios desde .env (hash opcional):
+ADMIN_USER = os.getenv("ADMIN_USER","admin")
+ADMIN_PASS = os.getenv("ADMIN_PASS","admin")  # plano o bcrypt
+RO_USER = os.getenv("READONLY_USER","viewer")
+RO_PASS = os.getenv("READONLY_PASS","viewer")
+
+def verify_password(plain, stored):
+    # Si stored ya es bcrypt, verifica; si no, compara texto plano
+    if stored.startswith("$2b$") or stored.startswith("$2a$"):
+        return pwd_ctx.verify(plain, stored)
+    return hmac.compare_digest(plain, stored)
+
+def create_jwt(sub: str, role: Literal["admin","readonly"]="admin", kind: Literal["access","refresh"]="access") -> str:
+    now = int(time.time())
+    ttl = ACCESS_TTL if kind=="access" else REFRESH_TTL
+    payload = {"sub": sub, "role": role, "kind": kind, "iat": now, "exp": now + ttl}
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+def decode_jwt(token: str) -> dict:
+    return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+
+# Intentos fallidos en memoria (simple)
+FAILED = {}  # {(username, minute_epoch): count}
+LOCKED = {}  # {username: unlock_epoch}
+
+MAX_FAIL = int(os.getenv("AUTH_MAX_FAIL","5"))
+LOCK_MIN = int(os.getenv("AUTH_LOCK_MIN","10"))
+
+def check_locked(user: str):
+    now = int(time.time())
+    if user in LOCKED and LOCKED[user] > now:
+        raise ValueError("Cuenta bloqueada temporalmente")
+
+def register_fail(user: str):
+    now = int(time.time()//60)
+    key = (user, now)
+    FAILED[key] = FAILED.get(key, 0) + 1
+    if FAILED[key] >= MAX_FAIL:
+        LOCKED[user] = int(time.time()) + LOCK_MIN*60
+
+def clear_fail(user: str):
+    # limpiar fallos para el usuario
+    for k in list(FAILED.keys()):
+        if k[0]==user: FAILED.pop(k, None)
+    LOCKED.pop(user, None)
+```
+
+**app/deps.py (reemplaza require_role para refresco y roles)**
+
+```python
+from fastapi import Header, HTTPException, status, Depends, Request
+from typing import List, Literal
+from .auth import decode_jwt
+
+def cors_allow_origins() -> List[str]:
+    raw = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173")
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+def require_jwt(authorization: str = Header(None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        payload = decode_jwt(token)
+        if payload.get("kind") != "access":
+            raise HTTPException(403, "Invalid token kind")
+        return payload
+    except Exception:
+        raise HTTPException(403, "Invalid token")
+
+def require_role(role: Literal["admin","readonly"]="admin"):
+    async def _inner(ctx=Depends(require_jwt)):
+        if ctx.get("role") not in ("admin","readonly"):
+            raise HTTPException(403, "Forbidden")
+        if role == "admin" and ctx.get("role") != "admin":
+            raise HTTPException(403, "Admin required")
+        return ctx
+    return _inner
+```
+
+**app/main.py (login con bloqueo + refresh/logout)**
+
+```python
+from pydantic import BaseModel
+from .auth import create_jwt, verify_password, ADMIN_USER, ADMIN_PASS, RO_USER, RO_PASS, check_locked, register_fail, clear_fail
+
+class LoginReq(BaseModel):
+    username: str
+    password: str
+
+@app.post("/auth/login")
+async def auth_login(req: LoginReq):
+    user, role, stored = None, None, None
+    try:
+        check_locked(req.username)
+    except ValueError:
+        raise HTTPException(status_code=423, detail="Locked: try later")
+    if req.username == ADMIN_USER:
+        user, role, stored = ADMIN_USER, "admin", ADMIN_PASS
+    elif req.username == RO_USER:
+        user, role, stored = RO_USER, "readonly", RO_PASS
+    if not user or not verify_password(req.password, stored):
+        register_fail(req.username)
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    clear_fail(req.username)
+    return {
+        "access": create_jwt(user, role, "access"),
+        "refresh": create_jwt(user, role, "refresh"),
+        "role": role
+    }
+
+class RefreshReq(BaseModel):
+    refresh: str
+
+@app.post("/auth/refresh")
+async def refresh_token(req: RefreshReq):
+    try:
+        payload = decode_jwt(req.refresh)  # type: ignore
+        if payload.get("kind") != "refresh":
+            raise HTTPException(403, "Invalid refresh")
+        return {"access": create_jwt(payload["sub"], payload["role"], "access")}
+    except Exception:
+        raise HTTPException(403, "Invalid refresh")
+```
+
+> **Consejo**: en `.env`, guarda contraseñas **con bcrypt** (`passlib`):
+> Genera un hash una vez (en tu PC Python):
+>
+> ```python
+> from passlib.context import CryptContext; print(CryptContext(schemes=["bcrypt"]).hash("TuPassFuerte"))
+> ```
+>
+> Pega el hash en `ADMIN_PASS`/`READONLY_PASS`.
+
+---
+
+## 1.2 IP Allowlist para rutas admin (opcional LAN estricta)
+
+**app/middlewares.py**
+
+```python
+from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi import Request, HTTPException
+import os
+
+class IPAllowlist(BaseHTTPMiddleware):
+    def __init__(self, app):
+        super().__init__(app)
+        raw = os.getenv("ADMIN_IP_ALLOW","")
+        self.allowed = [x.strip() for x in raw.split(",") if x.strip()]
+
+    async def dispatch(self, request: Request, call_next):
+        if not self.allowed:
+            return await call_next(request)
+        ip = request.client.host if request.client else ""
+        path = request.url.path
+        # Solo proteger endpoints críticos
+        protected = (path.startswith("/service") or path.startswith("/system") or path.startswith("/deploy") or path.startswith("/backup"))
+        if protected and ip not in self.allowed:
+            raise HTTPException(403, "Admin IP not allowed")
+        return await call_next(request)
+```
+
+En **app/main.py** registra:
+
+```python
+from .middlewares import IPAllowlist
+app.add_middleware(IPAllowlist)
+```
+
+`.env`:
+
+```
+ADMIN_IP_ALLOW=192.168.1.10,192.168.1.11
+```
+
+---
+
+## 1.3 Nginx endurecido (headers + rate-limit + tamaño)
+
+**/etc/nginx/nginx.conf (http {})** añade:
+
+```
+server_tokens off;
+limit_req_zone $binary_remote_addr zone=piadmin:10m rate=10r/s;
+```
+
+En tu **site-pi-admin.conf** dentro de `server { ... }`:
+
+```
+add_header X-Frame-Options DENY;
+add_header X-Content-Type-Options nosniff;
+add_header Referrer-Policy no-referrer;
+add_header Content-Security-Policy "default-src 'self'; connect-src 'self' ws: wss: http: https:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';" always;
+
+client_max_body_size 30m;       # para deploy ZIP
+limit_req zone=piadmin burst=20 nodelay;
+
+# Tiempo de proxy razonable
+proxy_read_timeout 75s;
+```
+
+---
+
+## 1.4 systemd hardening del servicio
+
+**/etc/systemd/system/pi-admin.service** (sección [Service]) añade:
+
+```
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/home/pi/raspi_deployer_starter
+AmbientCapabilities=
+CapabilityBoundingSet=
+UMask=0077
+LimitNOFILE=16384
+```
+
+Luego:
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl restart pi-admin
+```
+
+---
+
+## 1.5 Firewall + Fail2ban
+
+**UFW**
+
+```bash
+sudo ufw default deny incoming
+sudo ufw allow 22/tcp
+sudo ufw allow 80,443/tcp
+sudo ufw enable
+```
+
+**Fail2ban** (protege Nginx si hay fuerza bruta):
+
+* `/etc/fail2ban/filter.d/nginx-401.conf`
+
+```
+[Definition]
+failregex = ^<HOST> - .* "(GET|POST).*(HTTP.*)" 401
+ignoreregex =
+```
+
+* `/etc/fail2ban/jail.local`
+
+```
+[nginx-401]
+enabled = true
+filter = nginx-401
+action = iptables-multiport[name=nginx-401, port="http,https"]
+logpath = /var/log/nginx/access.log
+maxretry = 10
+findtime = 600
+bantime = 3600
+```
+
+```bash
+sudo systemctl restart fail2ban
+```
+
+---
+
+# 2) Observabilidad PRO (Prometheus)
+
+## 2.1 Exponer endpoint Prometheus
+
+**app/prom_metrics.py**
+
+```python
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+import time
+from fastapi import Response
+
+REQ_COUNT = Counter("piadmin_http_requests_total", "Total HTTP Requests", ["method","path","status"])
+REQ_LAT = Histogram("piadmin_request_latency_seconds", "Request latency", buckets=(0.01,0.05,0.1,0.25,0.5,1,2,5))
+CPU_G = Gauge("piadmin_cpu_percent", "CPU percent")
+RAM_G = Gauge("piadmin_ram_percent", "RAM percent")
+DISK_G = Gauge("piadmin_disk_percent", "Disk / percent")
+TEMP_G = Gauge("piadmin_temp_c", "CPU temperature C")
+
+async def metrics_handler():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+# Middleware para instrumentar latencia/contador
+async def instrument_request(request, call_next):
+    start = time.perf_counter()
+    resp = await call_next(request)
+    dur = time.perf_counter() - start
+    path = request.url.path
+    # agrega menos cardinalidad
+    if path.startswith("/metrics"): path="/metrics"
+    REQ_COUNT.labels(request.method, path, str(resp.status_code)).inc()
+    REQ_LAT.observe(dur)
+    return resp
+```
+
+En **app/main.py**:
+
+```python
+from fastapi import Request
+from .prom_metrics import metrics_handler, instrument_request, CPU_G, RAM_G, DISK_G, TEMP_G
+from .metrics import read_metrics
+
+@app.middleware("http")
+async def _instrument(request: Request, call_next):
+    return await instrument_request(request, call_next)
+
+@app.get("/metrics_prom")  # público para Prometheus en LAN
+async def metrics_prom():
+    # Pujar gauges básicos (snapshot)
+    m = await read_metrics()
+    CPU_G.set(m.cpu_percent)
+    RAM_G.set(m.mem_percent)
+    DISK_G.set(m.disk_percent)
+    if m.temp_c is not None: TEMP_G.set(m.temp_c)
+    return await metrics_handler()
+```
+
+> **Nota**: deja `/metrics_prom` accesible en LAN o protégelo con IP allowlist si prefieres.
+
+## 2.2 Prometheus + Grafana (opcional, con Docker)
+
+**prometheus.yml (en /opt/prometheus/)**:
+
+```yaml
+global:
+  scrape_interval: 5s
+scrape_configs:
+  - job_name: "piadmin"
+    static_configs:
+      - targets: ["127.0.0.1:8000"]  # si scrapea localmente
+        labels: { instance: "pi-1" }
+    metrics_path: /metrics_prom
+```
+
+**docker-compose.yml (opcional)**:
+
+```yaml
+version: "3"
+services:
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - /opt/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+  grafana:
+    image: grafana/grafana
+    ports: ["3000:3000"]
+```
+
+---
+
+# 3) QA / Resiliencia
+
+## 3.1 pytest (API básicas)
+
+**tests/test_auth.py**
+
+```python
+import os, pytest
+from fastapi.testclient import TestClient
+from app.main import app
+
+client = TestClient(app)
+
+def test_login_fail_locked():
+    for _ in range(6):
+        r = client.post("/auth/login", json={"username":"wrong","password":"x"})
+    assert r.status_code in (401,423)
+
+def test_login_ok_and_refresh(monkeypatch):
+    os.environ["ADMIN_USER"]="a"; os.environ["ADMIN_PASS"]="a"
+    r = client.post("/auth/login", json={"username":"a","password":"a"})
+    assert r.status_code==200
+    access = r.json()["access"]; refresh = r.json()["refresh"]
+    r2 = client.post("/auth/refresh", json={"refresh": refresh})
+    assert r2.status_code==200
+```
+
+**tests/test_service.py**
+
+```python
+from fastapi.testclient import TestClient
+from app.main import app
+
+client = TestClient(app)
+
+def test_health():
+    r = client.get("/health"); assert r.status_code==200
+```
+
+## 3.2 Playwright (UI e2e) — mínimo
+
+**frontend/playwright.config.ts** (si lo agregas) y test que haga login y verifique Dashboard. *(Opcional por espacio.)*
+
+## 3.3 k6 (carga) — `load.js`
+
+```js
+import http from 'k6/http';
+import { sleep, check } from 'k6';
+
+export const options = { vus: 10, duration: '30s' };
+
+export default function () {
+  const res = http.get('http://PI_IP:8000/health');
+  check(res, { 'status 200': (r) => r.status === 200 });
+  sleep(1);
+}
+```
+
+Ejecuta:
+
+```bash
+k6 run load.js
+```
+
+## 3.4 Chaos test (watchdog)
+
+```bash
+# simular caída de tu servicio app:
+sudo systemctl stop tuapp.service
+# espera 2-3 min -> el timer de watchdog debe reiniciarlo
+sudo systemctl status tuapp.service
+```
+
+---
+
+# 4) Backups automáticos con retención
+
+**deploy/backup.sh**
+
+```bash
+#!/usr/bin/env bash
+set -e
+DST="/home/pi/backups"
+TS=$(date +%Y%m%d_%H%M%S)
+mkdir -p "$DST"
+tar -czf "$DST/pi_backup_$TS.tgz" \
+  config/whitelist.yaml data/devices.yaml .env || true
+# Retener últimos 7
+ls -1t "$DST"/pi_backup_*.tgz | sed -e '1,7d' | xargs -r rm -f
+```
+
+**deploy/pi-backup.service**
+
+```
+[Unit]
+Description=Pi Admin backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/pi/raspi_deployer_starter
+ExecStart=/bin/bash /home/pi/raspi_deployer_starter/deploy/backup.sh
+```
+
+**deploy/pi-backup.timer**
+
+```
+[Unit]
+Description=Daily backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=pi-backup.service
+
+[Install]
+WantedBy=timers.target
+```
+
+Instalar:
+
+```bash
+sudo cp deploy/pi-backup.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now pi-backup.timer
+sudo systemctl status pi-backup.timer
+```
+
+*(Ya tienes `/backup/download` manual; esto es el programado con retención.)*
+
+---
+
+# 5) Runbooks + Checklist Operativa
+
+Crea `docs/RUNBOOK.md` con:
+
+* **Reinicio controlado**: `systemctl restart pi-admin` / `reboot`.
+* **Recuperación**: si el front no abre, probar `/health`, revisar `journalctl -u pi-admin -n 200`.
+* **Despliegue**: subir ZIP a `/deploy/zip` o `git pull` + restart automático.
+* **Rotación de secretos**: cambiar `JWT_SECRET`, regenerar `bcrypt` para usuarios, reiniciar servicio.
+* **Incidentes**: revisar fail2ban (`fail2ban-client status`), firewall (`ufw status`), Nginx logs.
+* **Backups**: verificar `/home/pi/backups`, restaurar último tar.
+* **Monitoreo**: Prometheus `/metrics_prom`, Grafana (si lo activaste).
+
+---
+
+## 6) Ajustes de producción recomendados
+
+* Fijar **CORS_ALLOW_ORIGINS** a tu dominio/IP concreto (no `*`).
+* Proteger `/metrics_prom` con **IP allowlist** si no usas Grafana.
+* **HTTPS** por Nginx (ya tienes self-signed; si usas dominio, agrega Let’s Encrypt).
+* **Deshabilitar** endpoints no usados en producción y cerrar puertos con UFW.
+* **Auditoría**: conserva `logs/download` y bitácora de acciones (ya registradas).

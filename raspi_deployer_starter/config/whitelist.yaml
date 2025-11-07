@@ -1,0 +1,12 @@
+services:
+  - nginx
+  - pi-admin.service
+
+logs_units:
+  - nginx
+  - pi-admin.service
+
+deploy:
+  allowed_targets:
+    - /home/pi/tuapp
+  service_to_restart: tuapp.service

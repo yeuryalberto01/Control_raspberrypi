@@ -1,0 +1,6 @@
+devices:
+- name: Pruebas yeury
+  base_url: 192.168.1.161
+  ssh_user: yeury
+  id: 5bbd6e9b-1030-4033-b242-a2250039a430
+  ssh_pass: Reyescleto01

@@ -1,0 +1,15 @@
+[Unit]
+Description=Raspberry Pi Admin API
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/raspi_deployer_starter
+Environment="PATH=/home/pi/.venvs/pi-admin/bin"
+EnvironmentFile=/home/pi/raspi_deployer_starter/.env
+ExecStart=/home/pi/.venvs/pi-admin/bin/uvicorn app.main:app --host ${APP_HOST:-0.0.0.0} --port ${APP_PORT:-8000}
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

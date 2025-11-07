@@ -1,0 +1,7 @@
+[Unit]
+Description=Pi Admin backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/pi/raspi_deployer_starter
+ExecStart=/bin/bash /home/pi/raspi_deployer_starter/deploy/backup.sh

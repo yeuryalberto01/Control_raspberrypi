@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raspi-deployer-starter"
+version = "0.1.0"
+description = "Panel de control y launcher para proyectos de desarrollo"
+authors = [
+    {name = "Proyecto Cenecompuc", email = "yeury@example.com"},
+]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "fabric",
+    "invoke",
+    "paramiko",
+    "python-dotenv",
+    "jinja2",
+    "pytest",
+    "requests",
+    "zeroconf",
+]
+
+[project.optional-dependencies]
+launcher = [
+    "customtkinter",
+    "psutil",
+    "scikit-learn",
+    "numpy",
+    "joblib",
+]
+
+[project.scripts]
+server-launcher = "raspi_deployer_starter.server_launcher:main"
+ultimate-launcher = "raspi_deployer_starter.ultimate_launcher:main"
+unified-launcher = "raspi_deployer_starter.unified_launcher:main"
+
+[tool.setuptools.packages.find]
+include = ["raspi_deployer_starter*"]

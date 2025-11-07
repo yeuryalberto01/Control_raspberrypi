@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Pi Watchdog every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Unit=pi-watchdog.service
+
+[Install]
+WantedBy=timers.target

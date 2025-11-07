@@ -1,0 +1,3 @@
+[console_scripts]
+server-launcher = raspi_deployer_starter.server_launcher:main
+ultimate-launcher = raspi_deployer_starter.ultimate_launcher:main

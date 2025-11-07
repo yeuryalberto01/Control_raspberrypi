@@ -1,0 +1,21 @@
+Metadata-Version: 2.4
+Name: raspi-deployer-starter
+Version: 0.1.0
+Summary: Panel de control y launcher para proyectos de desarrollo
+Author-email: Proyecto Cenecompuc <yeury@example.com>
+Requires-Dist: fastapi
+Requires-Dist: uvicorn[standard]
+Requires-Dist: fabric
+Requires-Dist: invoke
+Requires-Dist: paramiko
+Requires-Dist: python-dotenv
+Requires-Dist: jinja2
+Requires-Dist: pytest
+Requires-Dist: requests
+Requires-Dist: zeroconf
+Provides-Extra: launcher
+Requires-Dist: customtkinter; extra == "launcher"
+Requires-Dist: psutil; extra == "launcher"
+Requires-Dist: scikit-learn; extra == "launcher"
+Requires-Dist: numpy; extra == "launcher"
+Requires-Dist: joblib; extra == "launcher"

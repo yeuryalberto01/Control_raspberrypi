@@ -1,0 +1,9 @@
+[Unit]
+Description=Pi Watchdog health
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=WATCHDOG_URL=http://127.0.0.1:8000/health
+Environment=WATCHDOG_SERVICE=tuapp.service
+ExecStart=/home/pi/.venvs/pi-admin/bin/python /home/pi/raspi_deployer_starter/app/healthcheck.py

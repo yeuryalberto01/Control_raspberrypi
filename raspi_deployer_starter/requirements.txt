@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+fabric
+invoke
+paramiko
+python-dotenv
+jinja2
+pytest
+requests
+zeroconf
+psutil
+pyjwt
+pyyaml
+python-multipart
