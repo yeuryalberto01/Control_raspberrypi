@@ -200,7 +200,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.target == "frontend" and args.command == "start" and args.port == 8000:
+    if getattr(args, "target", None) == "frontend" and args.command == "start" and getattr(args, "port", 8000) == 8000:
         # avoid accidental reuse of backend port
         args.port = 5173
 
