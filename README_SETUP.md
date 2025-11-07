@@ -288,3 +288,21 @@ python raspi_deployer_starter/examples/example_ssh_launcher.py
 **Versión:** 2.1.0  
 **Fecha:** Noviembre 2025  
 **Estado:** Funcional y listo para uso
+
+## Scripts para Raspberry Pi
+
+`ash
+python3 scripts/install_backend_service.sh
+chmod +x scripts/deploy_frontend_to_nginx.sh
+./scripts/deploy_frontend_to_nginx.sh
+`\r\nEl primer script crea el servicio systemd 'pi-admin'. El segundo compila el frontend y configura nginx para servirlo desde /var/www/pi-admin.\r\n
+
+## Scripts para Raspberry Pi
+
+```bash
+python3 scripts/install_backend_service.sh
+chmod +x scripts/deploy_frontend_to_nginx.sh
+./scripts/deploy_frontend_to_nginx.sh
+```
+
+El primer script crea el servicio systemd 'pi-admin'. El segundo compila el frontend y configura nginx para servirlo desde /var/www/pi-admin.

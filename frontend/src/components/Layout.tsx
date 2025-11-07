@@ -37,8 +37,12 @@ export default function Layout({ children, onLogout }: LayoutProps) {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = subscribeActiveDevice(() => setActive(getActiveDevice()));
-    return () => unsubscribe();
+    const unsubscribe = subscribeActiveDevice(() => {
+      setActive(getActiveDevice());
+    });
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   const handleDeviceChange = (value: string) => {

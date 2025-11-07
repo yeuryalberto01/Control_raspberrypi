@@ -4,7 +4,7 @@ API endpoints for managing the device registry.
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status, Header
+from fastapi import APIRouter, HTTPException, Response, status, Header
 from invoke import UnexpectedExit
 
 from . import registry
@@ -13,7 +13,7 @@ from . import ssh_manager
 from .metrics import collect_remote_metrics
 from .schemas import Device, DeviceCreate, Metrics, ServiceAction, ServiceStatus, ServiceStatusRequest, ExecResult
 # from .schemas import User  # Disabled for local use
-from .services import list_remote_available_services, manage_remote_service, get_multiple_remote_status, get_remote_service_status
+from .services import list_remote_available_services, manage_remote_service, get_multiple_remote_status
 from .system_ops import remote_reboot, remote_poweroff
 
 router = APIRouter(
@@ -89,12 +89,12 @@ def get_remote_device_metrics(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"A command failed on the remote host: {e.result.command}",
-        )
-    except Exception as e:
+        ) from e
+    except Exception as e:  # pylint: disable=broad-except
         # Catches connection errors from the manager and others
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"SSH connection failed: {e}"
-        )
+        ) from e
     finally:
         if "conn" in locals() and conn.is_connected:
             conn.close()
@@ -110,10 +110,10 @@ def get_remote_service_list(
     try:
         conn = ssh_manager.get_ssh_connection(device_id)
         services = list_remote_available_services(conn)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to list services: {e}"
-        )
+        ) from e
     finally:
         if "conn" in locals() and conn.is_connected:
             conn.close()
@@ -130,16 +130,16 @@ def manage_remote_service_endpoint(
         conn = ssh_manager.get_ssh_connection(device_id)
         result = manage_remote_service(conn, action)
     except PermissionError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     except UnexpectedExit as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Command failed on remote host: {e.result.command} -> {e.result.stderr}",
-        )
-    except Exception as e:
+        ) from e
+    except Exception as e:  # pylint: disable=broad-except
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"SSH operation failed: {e}"
-        )
+        ) from e
     finally:
         if "conn" in locals() and conn.is_connected:
             conn.close()
@@ -155,10 +155,10 @@ def get_multiple_remote_services_status(
     try:
         conn = ssh_manager.get_ssh_connection(device_id)
         statuses = get_multiple_remote_status(conn, payload.services)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to get service statuses: {e}"
-        )
+        ) from e
     finally:
         if "conn" in locals() and conn.is_connected:
             conn.close()
@@ -180,10 +180,10 @@ def remote_system_reboot(
     try:
         conn = ssh_manager.get_ssh_connection(device_id)
         result = remote_reboot(conn)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to reboot device: {e}"
-        )
+        ) from e
     finally:
         if "conn" in locals() and conn.is_connected:
             conn.close()
@@ -205,10 +205,10 @@ def remote_system_poweroff(
     try:
         conn = ssh_manager.get_ssh_connection(device_id)
         result = remote_poweroff(conn)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to poweroff device: {e}"
-        )
+        ) from e
     finally:
         if "conn" in locals() and conn.is_connected:
             conn.close()

@@ -12,3 +12,4 @@ psutil
 pyjwt
 pyyaml
 python-multipart
+httpx

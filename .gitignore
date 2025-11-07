@@ -13,3 +13,5 @@ __pycache__/
 .pytest_cache/
 raspi_deployer_starter/.env
 frontend/.env
+.launcher/
+logs/

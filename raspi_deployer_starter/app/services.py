@@ -7,7 +7,6 @@ from __future__ import annotations
 from typing import Iterable, List
 
 from fabric import Connection
-from invoke import UnexpectedExit
 
 from .config_whitelist import allowed_service, list_services
 from .schemas import ExecResult, ServiceAction, ServiceStatus
@@ -91,7 +90,7 @@ async def list_remote_available_services(conn: Connection) -> List[str]:
     If a whitelist is configured, it is returned as-is. Otherwise, systemctl is
     queried remotely to provide a list of loaded service units.
     """
-    whitelist = whitelist_services()
+    whitelist = list_services()
     if whitelist:
         return whitelist
 

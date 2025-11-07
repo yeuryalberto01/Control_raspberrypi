@@ -17,7 +17,6 @@ from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 import fabric
 import ifaddr
 from fastapi import (
-    Body,
     Depends,
     FastAPI,
     HTTPException,
@@ -25,7 +24,6 @@ from fastapi import (
     File,
     Query,
     Request,
-    Response,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
@@ -188,22 +186,30 @@ class DeviceDetails(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    """Payload to request a JWT via /auth/login."""
+
     username: str
     password: SecretStr
 
 
 class LoginResponse(BaseModel):
+    """Response returned by /auth/login."""
+
     token: str
     role: str
 
 
 class ServiceStatusRequest(BaseModel):
+    """Payload for /service/status to query several units at once."""
+
     services: List[str] = Field(
         ..., min_length=1, description="Lista de servicios a consultar."
     )
 
 
 class DeployGitRequest(BaseModel):
+    """Request body for /deploy/git endpoints."""
+
     target_dir: str = Field(
         ..., description="Directorio destino whitelisteado para git pull."
     )
