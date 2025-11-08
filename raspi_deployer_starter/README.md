@@ -13,7 +13,7 @@ pip install -r requirements.txt
 APP_NAME=mi_app
 PI_HOST=raspberrypi.local
 PI_USER=pi
-APP_PORT=8080
+APP_PORT=9090
 ```
 
 3) Despliegue completo:

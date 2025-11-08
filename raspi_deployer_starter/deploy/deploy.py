@@ -21,7 +21,7 @@ PI_USER  = os.getenv("PI_USER", "pi")
 PI_DIR   = f"/opt/{APP_NAME}"
 VENV     = f"{PI_DIR}/.venv"
 SERVICE  = f"{APP_NAME}.service"
-PORT     = int(os.getenv("APP_PORT", "8080"))
+PORT     = int(os.getenv("APP_PORT", "9090"))
 FINDER   = RaspberryPiDiscoverer(user=PI_USER)
 
 

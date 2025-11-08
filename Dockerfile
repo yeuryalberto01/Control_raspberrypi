@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 ENV PYTHONPATH=/app
+ENV APP_PORT=9090
 
 # Apunta al paquete real dentro de raspi_deployer_starter.
-CMD ["uvicorn","raspi_deployer_starter.app.main:app","--host","0.0.0.0","--port","8080"]
+CMD ["uvicorn","raspi_deployer_starter.app.main:app","--host","0.0.0.0","--port","9090"]

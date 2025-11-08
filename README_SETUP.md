@@ -229,7 +229,7 @@ pip install -r requirements.txt
 ### Error: "Puerto ocupado"
 ```powershell
 # Cambiar puerto en el comando uvicorn
-uvicorn raspi_deployer_starter.app.main:app --host 0.0.0.0 --port 8080 --reload
+uvicorn raspi_deployer_starter.app.main:app --host 0.0.0.0 --port 9090 --reload
 ```
 
 ## 📞 **Soporte y Desarrollo**
