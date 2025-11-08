@@ -36,6 +36,10 @@ class Settings:
         jwt_algorithm: str = "HS256",
         ai_api_endpoint: str = "",
         ai_api_key: str = "",
+        docker_host: str = "",
+        portainer_url: str = "",
+        portainer_api_key: str = "",
+        portainer_verify_ssl: bool = False,
     ) -> None:
         self.app_host = app_host
         self.app_port = app_port
@@ -53,6 +57,10 @@ class Settings:
         self.devices_reg_path = devices_reg_path
         self.ai_api_endpoint = ai_api_endpoint
         self.ai_api_key = ai_api_key
+        self.docker_host = docker_host
+        self.portainer_url = portainer_url
+        self.portainer_api_key = portainer_api_key
+        self.portainer_verify_ssl = portainer_verify_ssl
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -64,6 +72,12 @@ class Settings:
                 return int(raw)
             except ValueError:
                 return default
+
+        def _get_bool(key: str, default: bool) -> bool:
+            raw = os.getenv(key)
+            if raw is None:
+                return default
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
 
         return cls(
             app_host=os.getenv("APP_HOST", "0.0.0.0"),
@@ -81,6 +95,10 @@ class Settings:
             devices_reg_path=os.getenv("DEVICES_REG_PATH", "data/devices.yaml"),
             ai_api_endpoint=os.getenv("AI_API_ENDPOINT", ""),
             ai_api_key=os.getenv("AI_API_KEY", ""),
+            docker_host=os.getenv("DOCKER_HOST", ""),
+            portainer_url=os.getenv("PORTAINER_URL", ""),
+            portainer_api_key=os.getenv("PORTAINER_API_KEY", ""),
+            portainer_verify_ssl=_get_bool("PORTAINER_VERIFY_SSL", False),
         )
 
     def allowed_origins(self) -> List[str]:

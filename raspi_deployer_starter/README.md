@@ -58,6 +58,8 @@ El backend FastAPI ahora expone endpoints con autenticacion JWT y roles (`admin`
 - Despliegues rapidos: `/deploy/archive?target_dir=...` acepta ZIP/TAR en rutas whitelisteadas; `/deploy/git` ejecuta `git pull` y reinicia el servicio configurado.
 - Rate-limit basico (300 req/min por IP) protege contra abusos en LAN.
 - `GET /backup/download` genera un tar.gz con config, whitelist, registro y logs.
+- Monitoreo Docker local: `/api/docker/info` y `/api/docker/containers` (rol `readonly`). Acciones start/stop/restart via `POST /api/docker/containers/{id}/{action}` y creacion de contenedores nuevos con puertos adaptativos en `/api/docker/containers/run` (rol `admin`).
+- Integracion Portainer: `/api/portainer/health`, `/api/portainer/endpoints`, `/api/portainer/stacks` y `/api/portainer/stacks/{id}`. Re-despliegues Git con `POST /api/portainer/stacks/{id}/redeploy` (rol `admin`).
 
 Para instalar en la Raspberry Pi ejecuta `deploy/install_pi.sh` y opcionalmente habilita el reverse proxy `nginx/site-pi-admin.conf` (incluye los bloques para los WebSocket de logs y metricas).
 
@@ -90,6 +92,13 @@ Publica el contenido de `frontend/dist` en tu Nginx (por ejemplo en `/var/www/pi
 - Pruebas unitarias: `pytest` (incluye `tests/test_api.py`, `tests/test_auth.py`, `tests/test_service.py`).
 - Carga basica con k6: `k6 run load.js`.
 - Runbook operativo: consulta `docs/RUNBOOK.md` para procedimientos de reinicio, incidencias y restauracion.
+
+## Monitoreo de Docker y Portainer
+
+1. Define en `.env` (lado backend) la ruta del socket Docker si difiere del predeterminado (`DOCKER_HOST=unix:///var/run/docker.sock`).
+2. Crea un API Key en Portainer (Perfil → API Keys) y configura `PORTAINER_URL` con el sufijo `/api`, `PORTAINER_API_KEY` y `PORTAINER_VERIFY_SSL`.
+3. Tras reiniciar el servicio FastAPI, consume los endpoints `GET /api/docker/*` para supervisar contenedores locales y `GET /api/portainer/*` para consultar endpoints/stacks gestionados desde Portainer.
+4. Usa el rol `admin` para re-deploy Git stacks (`POST /api/portainer/stacks/{id}/redeploy`), arrancar/detener contenedores individuales (`POST /api/docker/containers/{id}/{action}`) o crear nuevos contenedores dejando que Docker asigne los puertos disponibles (`POST /api/docker/containers/run` sin especificar `host_port`).
 
 ## GUI de control desde tu PC
 

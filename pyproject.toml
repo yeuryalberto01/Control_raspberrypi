@@ -20,6 +20,8 @@ dependencies = [
     "pytest",
     "requests",
     "zeroconf",
+    "httpx",
+    "docker",
 ]
 
 [project.optional-dependencies]

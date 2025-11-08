@@ -6,6 +6,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+import shutil
+import socket
+import subprocess
 import time
 from dataclasses import dataclass
 from typing import AsyncGenerator, Dict, List, Optional, Tuple
@@ -13,30 +16,158 @@ from typing import AsyncGenerator, Dict, List, Optional, Tuple
 import psutil
 from fabric import Connection
 
-from .schemas import Metrics, ProcessMetric
+from .schemas import DiskPartitionMetric, Metrics, NetworkInterfaceMetric, ProcessMetric
 from .system_ops import get_uptime_seconds
 
 
-def _read_temperature() -> Optional[float]:
+_CPU_TEMP_KEYS = {
+    "cpu",
+    "cpu-thermal",
+    "soc_thermal",
+    "coretemp",
+    "k10temp",
+    "bcpu",
+}
+_GPU_TEMP_KEYS = {
+    "gpu",
+    "gpu-thermal",
+    "v3d",
+    "video",
+}
+
+
+def _read_vcgencmd_temperature() -> Optional[float]:
+    """Usa vcgencmd si est?? disponible para obtener la temperatura del SoC."""
+    if shutil.which("vcgencmd") is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["vcgencmd", "measure_temp"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=2,
+        )
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return None
+    match = re.search(r"temp=([\d\.]+)", result.stdout)
+    if not match:
+        return None
+    try:
+        return round(float(match.group(1)), 2)
+    except ValueError:
+        return None
+
+
+def _read_temperatures() -> Tuple[Optional[float], Optional[float], Dict[str, float]]:
+    """Lee las temperaturas disponibles y devuelve CPU, GPU y un mapa crudo."""
     try:
         temps = psutil.sensors_temperatures()
     except (AttributeError, NotImplementedError):
+        temps = {}
+
+    cpu_temp: Optional[float] = None
+    gpu_temp: Optional[float] = None
+    extra: Dict[str, float] = {}
+    if temps:
+        for label, entries in temps.items():
+            label_lower = label.lower()
+            for entry in entries:
+                name = entry.label or label
+                value = round(entry.current, 2)
+                extra[name] = value
+                name_lower = name.lower()
+                if cpu_temp is None and (
+                    label_lower in _CPU_TEMP_KEYS or "cpu" in name_lower or "soc" in name_lower
+                ):
+                    cpu_temp = value
+                if gpu_temp is None and (
+                    label_lower in _GPU_TEMP_KEYS or "gpu" in name_lower
+                ):
+                    gpu_temp = value
+
+    if cpu_temp is None:
+        cpu_temp = _read_vcgencmd_temperature()
+        if cpu_temp is not None:
+            extra.setdefault("vcgencmd", cpu_temp)
+
+    return cpu_temp, gpu_temp, extra
+
+
+def _read_temperature() -> Optional[float]:
+    cpu_temp, _, _ = _read_temperatures()
+    return cpu_temp
+
+
+def _read_fan_speed() -> Optional[int]:
+    """Devuelve la primera velocidad de ventilador disponible en RPM."""
+    try:
+        fans = psutil.sensors_fans()
+    except (AttributeError, NotImplementedError):
         return None
-
-    if not temps:
+    if not fans:
         return None
-
-    # Prefer common Raspberry Pi labels.
-    for key in ("cpu-thermal", "soc_thermal", "gpu"):
-        entries = temps.get(key)
-        if entries:
-            return round(entries[0].current, 2)
-
-    # Fallback to the first available sensor.
-    for entries in temps.values():
-        if entries:
-            return round(entries[0].current, 2)
+    for entries in fans.values():
+        for entry in entries:
+            if entry.current and entry.current > 0:
+                return int(entry.current)
     return None
+
+
+def _collect_disk_partitions() -> List[DiskPartitionMetric]:
+    partitions: List[DiskPartitionMetric] = []
+    for part in psutil.disk_partitions(all=False):
+        try:
+            usage = psutil.disk_usage(part.mountpoint)
+        except (PermissionError, FileNotFoundError):
+            continue
+        partitions.append(
+            DiskPartitionMetric(
+                device=part.device,
+                mountpoint=part.mountpoint,
+                fstype=part.fstype,
+                total_gb=_bytes_to_gb(usage.total),
+                used_gb=_bytes_to_gb(usage.used),
+                percent=round(usage.percent, 2),
+            )
+        )
+    return partitions
+
+
+def _collect_network_interfaces() -> List[NetworkInterfaceMetric]:
+    interfaces: List[NetworkInterfaceMetric] = []
+    stats = psutil.net_if_stats()
+    addresses = psutil.net_if_addrs()
+    mac_families = {
+        af
+        for af in (
+            getattr(psutil, "AF_LINK", None),
+            getattr(socket, "AF_PACKET", None),
+        )
+        if af is not None
+    }
+
+    for name, stat in stats.items():
+        ipv4 = ipv6 = mac = None
+        for addr in addresses.get(name, []):
+            if addr.family == socket.AF_INET:
+                ipv4 = addr.address
+            elif addr.family == socket.AF_INET6:
+                ipv6 = addr.address
+            elif mac_families and addr.family in mac_families:
+                mac = addr.address
+        interfaces.append(
+            NetworkInterfaceMetric(
+                name=name,
+                mac=mac,
+                ipv4=ipv4,
+                ipv6=ipv6,
+                is_up=stat.isup,
+                speed_mbps=stat.speed if stat.speed > 0 else None,
+                mtu=stat.mtu if stat.mtu > 0 else None,
+            )
+        )
+    return interfaces
 
 
 @dataclass
@@ -133,12 +264,17 @@ def collect_metrics() -> Metrics:
     """Collects metrics for the LOCAL host using psutil."""
     cpu_per_core = psutil.cpu_percent(interval=None, percpu=True) or []
     cpu_percent = sum(cpu_per_core) / len(cpu_per_core) if cpu_per_core else psutil.cpu_percent(interval=None)
+    cpu_freq = psutil.cpu_freq()
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
     swap = psutil.swap_memory()
     process_count = len(psutil.pids())
     net_rx_kbps, net_tx_kbps = _read_local_network_rates()
     top_cpu, top_mem = _collect_top_processes_local()
+    cpu_temp, gpu_temp, extra_temps = _read_temperatures()
+    fan_speed = _read_fan_speed()
+    disk_partitions = _collect_disk_partitions()
+    net_interfaces = _collect_network_interfaces()
 
     try:
         load1, load5, load15 = psutil.getloadavg()
@@ -149,21 +285,34 @@ def collect_metrics() -> Metrics:
         cpu_percent=round(cpu_percent, 2),
         cpu_cores=len(cpu_per_core) or (psutil.cpu_count(logical=True) or 0),
         cpu_per_core=[round(value, 2) for value in cpu_per_core],
+        cpu_freq_current_mhz=round(cpu_freq.current, 2) if cpu_freq else None,
+        cpu_freq_min_mhz=round(cpu_freq.min, 2) if cpu_freq and cpu_freq.min else None,
+        cpu_freq_max_mhz=round(cpu_freq.max, 2) if cpu_freq and cpu_freq.max else None,
         mem_total_mb=_bytes_to_mb(mem.total),
         mem_used_mb=_bytes_to_mb(mem.used),
         mem_available_mb=_bytes_to_mb(getattr(mem, "available", 0)),
+        mem_free_mb=_bytes_to_mb(getattr(mem, "free", 0)),
         mem_percent=round(mem.percent, 2),
+        mem_cached_mb=_bytes_to_mb(getattr(mem, "cached", 0)) if hasattr(mem, "cached") else None,
+        mem_buffers_mb=_bytes_to_mb(getattr(mem, "buffers", 0)) if hasattr(mem, "buffers") else None,
         swap_total_mb=_bytes_to_mb(swap.total),
         swap_used_mb=_bytes_to_mb(swap.used),
+        swap_free_mb=_bytes_to_mb(getattr(swap, "free", 0)),
         disk_total_gb=_bytes_to_gb(disk.total),
         disk_used_gb=_bytes_to_gb(disk.used),
+        disk_free_gb=_bytes_to_gb(disk.free),
         disk_percent=round(disk.percent, 2),
+        disk_partitions=disk_partitions,
         net_rx_kbps=round(net_rx_kbps, 2),
         net_tx_kbps=round(net_tx_kbps, 2),
+        net_interfaces=net_interfaces,
         process_count=process_count,
         top_cpu=top_cpu,
         top_mem=top_mem,
-        temp_c=_read_temperature(),
+        temp_c=cpu_temp,
+        gpu_temp_c=gpu_temp,
+        fan_speed_rpm=fan_speed,
+        extra_temperatures=extra_temps,
         load1=round(load1, 2),
         load5=round(load5, 2),
         load15=round(load15, 2),
@@ -277,42 +426,69 @@ def collect_remote_metrics(conn: Connection) -> Metrics:
         if len(parts) >= 3:
             load1, load5, load15 = float(parts[0]), float(parts[1]), float(parts[2])
 
-    # 2. Get Memory Info (in bytes from `free -b`)
-    mem_result = conn.run("free -b", hide=True, warn=True)
-    mem_total = mem_used = mem_available = swap_total = swap_used = 0
+    # 2. Get Memory Info from /proc/meminfo
+    mem_info = conn.run("cat /proc/meminfo", hide=True, warn=True)
+    mem_total = mem_used = mem_available = mem_free = 0
+    mem_cached = mem_buffers = None
+    swap_total = swap_used = swap_free = 0
     mem_percent = 0.0
-    if mem_result.ok:
-        lines = mem_result.stdout.splitlines()
-        if len(lines) > 1:
-            parts = lines[1].split()
-            if len(parts) >= 7:
-                mem_total = int(parts[1])
-                mem_used = int(parts[2])
-                mem_available = int(parts[6])
-                if mem_total > 0:
-                    mem_percent = round((mem_used / mem_total) * 100, 2)
-        if len(lines) > 2:
-            parts = lines[2].split()
-            if len(parts) >= 3:
-                swap_total = int(parts[1])
-                swap_used = int(parts[2])
+    if mem_info.ok:
+        info_map: Dict[str, int] = {}
+        for line in mem_info.stdout.splitlines():
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            match = re.search(r"(\d+)", value)
+            if match:
+                info_map[key.strip()] = int(match.group(1)) * 1024
+        mem_total = info_map.get("MemTotal", 0)
+        mem_available = info_map.get("MemAvailable", info_map.get("MemFree", 0))
+        mem_free = info_map.get("MemFree", 0)
+        mem_cached = info_map.get("Cached")
+        mem_buffers = info_map.get("Buffers")
+        if mem_total > 0:
+            mem_used = max(mem_total - mem_available, 0)
+            mem_percent = round((mem_used / mem_total) * 100, 2)
+        swap_total = info_map.get("SwapTotal", 0)
+        swap_free = info_map.get("SwapFree", 0)
+        swap_used = max(swap_total - swap_free, 0)
 
-    # 3. Get Disk Usage for root filesystem
-    disk_result = conn.run("df --output=size,used,pcent /", hide=True, warn=True)
+    # 3. Get Disk Usage for all mounted filesystems
+    disk_partitions: List[DiskPartitionMetric] = []
     disk_total, disk_used, disk_percent = 0, 0, 0.0
-    if disk_result.ok:
-        lines = disk_result.stdout.splitlines()
-        if len(lines) > 1:
-            # Output is like: 1K-blocks      Used Available Use%
-            # We get size and used in 1K blocks
-            parts = lines[1].split()
-            if len(parts) >= 3:
-                disk_total = int(parts[0]) * 1024 # to bytes
-                disk_used = int(parts[1]) * 1024 # to bytes
-                # Parse percentage like '87%'
-                pcent_match = re.search(r"(\d+)", parts[2])
-                if pcent_match:
-                    disk_percent = float(pcent_match.group(1))
+    disk_cmd = conn.run(
+        "df -P -k --output=source,target,fstype,size,used,pcent",
+        hide=True,
+        warn=True,
+    )
+    if disk_cmd.ok:
+        lines = disk_cmd.stdout.splitlines()
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) < 6:
+                continue
+            total_bytes = int(parts[3]) * 1024
+            used_bytes = int(parts[4]) * 1024
+            percent_match = re.search(r"(\d+)", parts[5])
+            percent_value = float(percent_match.group(1)) if percent_match else 0.0
+            percent_value = round(percent_value, 2)
+            partition_metric = DiskPartitionMetric(
+                device=parts[0],
+                mountpoint=parts[1],
+                fstype=parts[2],
+                total_gb=_bytes_to_gb(total_bytes),
+                used_gb=_bytes_to_gb(used_bytes),
+                percent=percent_value,
+            )
+            disk_partitions.append(partition_metric)
+            if disk_total == 0:
+                disk_total = total_bytes
+                disk_used = used_bytes
+                disk_percent = percent_value
+            if parts[1] == "/":
+                disk_total = total_bytes
+                disk_used = used_bytes
+                disk_percent = percent_value
 
     # 4. Get Temperature
     temp_c = None
@@ -380,25 +556,40 @@ def collect_remote_metrics(conn: Connection) -> Metrics:
         except ValueError:
             process_count = 0
     top_cpu, top_mem = _collect_top_processes_remote(conn)
+    disk_free = max(disk_total - disk_used, 0)
+    extra_temps = {"vcgencmd": temp_c} if temp_c is not None else {}
     return Metrics(
         cpu_percent=cpu_percent,
         cpu_cores=cpu_cores,
         cpu_per_core=cpu_per_core,
+        cpu_freq_current_mhz=None,
+        cpu_freq_min_mhz=None,
+        cpu_freq_max_mhz=None,
         mem_total_mb=_bytes_to_mb(mem_total),
         mem_used_mb=_bytes_to_mb(mem_used),
         mem_available_mb=_bytes_to_mb(mem_available),
+        mem_free_mb=_bytes_to_mb(mem_free),
         mem_percent=mem_percent,
+        mem_cached_mb=_bytes_to_mb(mem_cached) if mem_cached is not None else None,
+        mem_buffers_mb=_bytes_to_mb(mem_buffers) if mem_buffers is not None else None,
         swap_total_mb=_bytes_to_mb(swap_total),
         swap_used_mb=_bytes_to_mb(swap_used),
+        swap_free_mb=_bytes_to_mb(swap_free),
         disk_total_gb=_bytes_to_gb(disk_total),
         disk_used_gb=_bytes_to_gb(disk_used),
+        disk_free_gb=_bytes_to_gb(disk_free),
         disk_percent=disk_percent,
+        disk_partitions=disk_partitions,
         net_rx_kbps=net_rx_kbps,
         net_tx_kbps=net_tx_kbps,
+        net_interfaces=[],
         process_count=process_count,
         top_cpu=top_cpu,
         top_mem=top_mem,
         temp_c=temp_c,
+        gpu_temp_c=None,
+        fan_speed_rpm=None,
+        extra_temperatures=extra_temps,
         load1=load1,
         load5=load5,
         load15=load15,

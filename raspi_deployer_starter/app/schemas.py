@@ -7,7 +7,8 @@ and host information as described in the project improvement plan.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from datetime import datetime
+from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -115,31 +116,211 @@ class ProcessMetric(BaseModel):
     cpu_percent: float
     mem_percent: float
 
+
+class DiskPartitionMetric(BaseModel):
+    """Uso detallado de un punto de montaje especifico."""
+
+    device: str
+    mountpoint: str
+    fstype: str
+    total_gb: float
+    used_gb: float
+    percent: float
+
+
+class NetworkInterfaceMetric(BaseModel):
+    """Estado basico de una interfaz de red local."""
+
+    name: str
+    mac: Optional[str] = None
+    ipv4: Optional[str] = None
+    ipv6: Optional[str] = None
+    is_up: bool = False
+    speed_mbps: Optional[float] = None
+    mtu: Optional[int] = None
+
+
 class Metrics(BaseModel):
-    """Informaci??n de m?tricas bosicas del sistema."""
+    """Informaci��n de m��tricas b��sicas y extendidas del sistema."""
 
     cpu_percent: float
     cpu_cores: int
     cpu_per_core: List[float] = Field(default_factory=list)
+    cpu_freq_current_mhz: Optional[float] = None
+    cpu_freq_min_mhz: Optional[float] = None
+    cpu_freq_max_mhz: Optional[float] = None
     mem_total_mb: int
     mem_used_mb: int
     mem_available_mb: int
+    mem_free_mb: int
     mem_percent: float
+    mem_cached_mb: Optional[int] = None
+    mem_buffers_mb: Optional[int] = None
     swap_total_mb: int
     swap_used_mb: int
+    swap_free_mb: int
     disk_total_gb: float
     disk_used_gb: float
+    disk_free_gb: float
     disk_percent: float
+    disk_partitions: List[DiskPartitionMetric] = Field(default_factory=list)
     net_rx_kbps: float
     net_tx_kbps: float
+    net_interfaces: List[NetworkInterfaceMetric] = Field(default_factory=list)
     process_count: int
     top_cpu: List[ProcessMetric] = Field(default_factory=list)
     top_mem: List[ProcessMetric] = Field(default_factory=list)
     temp_c: Optional[float] = None
+    gpu_temp_c: Optional[float] = None
+    fan_speed_rpm: Optional[int] = None
+    extra_temperatures: Dict[str, float] = Field(default_factory=dict)
     load1: float
     load5: float
     load15: float
     uptime_seconds: int
+
+
+class DockerPortMapping(BaseModel):
+    """Asociac��n de puertos expuestos por un contenedor."""
+
+    container_port: str
+    protocol: str
+    host_ip: Optional[str] = None
+    host_port: Optional[str] = None
+
+
+class DockerContainerSummary(BaseModel):
+    """Datos de uso y estado de un contenedor Docker."""
+
+    id: str
+    name: str
+    image: str
+    status: str
+    state: str
+    created: datetime
+    ports: List[DockerPortMapping] = Field(default_factory=list)
+    cpu_percent: Optional[float] = None
+    mem_usage_mb: Optional[float] = None
+    mem_percent: Optional[float] = None
+
+
+class DockerPortRequest(BaseModel):
+    """Solicitud de mapeo de puertos al arrancar un contenedor."""
+
+    container_port: str = Field(..., description="Puerto interno, ej: '80' o '80/tcp'.")
+    protocol: str = Field(
+        "tcp",
+        description="Protocolo a exponer (tcp/udp). Se ignora si container_port ya incluye '/proto'.",
+    )
+    host_ip: Optional[str] = Field(
+        None,
+        description="IP del host donde se expondr�� el puerto. Omite para usar 0.0.0.0.",
+    )
+    host_port: Optional[int] = Field(
+        None,
+        description="Puerto del host. Deja vac��o para que Docker asigne uno disponible.",
+    )
+
+    @field_validator("container_port")
+    @classmethod
+    def validate_container_port(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("El puerto del contenedor no puede estar vacio.")
+        return normalized
+
+    @field_validator("protocol")
+    @classmethod
+    def validate_protocol(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"tcp", "udp"}:
+            raise ValueError("El protocolo debe ser tcp o udp.")
+        return normalized
+
+
+class DockerRunRequest(BaseModel):
+    """Parametros basicos para crear un contenedor."""
+
+    image: str = Field(..., description="Imagen a ejecutar, ej: 'nginx:latest'.")
+    name: Optional[str] = Field(None, description="Nombre opcional del contenedor.")
+    command: Optional[Union[str, List[str]]] = Field(
+        None, description="Comando/entrypoint opcional."
+    )
+    env: Dict[str, str] = Field(
+        default_factory=dict, description="Variables de entorno adicionales."
+    )
+    ports: List[DockerPortRequest] = Field(
+        default_factory=list,
+        description="Puertos a exponer. Deja host_port vacio para asignacion automatica.",
+    )
+    restart_policy: Optional[str] = Field(
+        None, description="Politica de reinicio (no, on-failure, unless-stopped, always)."
+    )
+    auto_remove: bool = Field(
+        False, description="Si es True, Docker eliminara el contenedor al detenerse."
+    )
+    privileged: bool = Field(False, description="Ejecuta el contenedor en modo privilegiado.")
+    detach: bool = Field(
+        True,
+        description="Debe permanecer True para ejecutar en segundo plano y devolver un resumen.",
+    )
+    network: Optional[str] = Field(
+        None, description="Nombre de la red Docker donde conectar el contenedor."
+    )
+    workdir: Optional[str] = Field(None, description="Directorio de trabajo dentro del contenedor.")
+
+    @field_validator("image")
+    @classmethod
+    def validate_image(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("La imagen es obligatoria.")
+        return normalized
+
+    @field_validator("detach")
+    @classmethod
+    def enforce_detach(cls, value: bool) -> bool:
+        if not value:
+            raise ValueError("detach debe ser True para usar este endpoint.")
+        return value
+
+
+class DockerInfo(BaseModel):
+    """Resumen de la instancia Docker local."""
+
+    server_version: str
+    os: str
+    architecture: str
+    kernel_version: Optional[str] = None
+    containers_total: int
+    containers_running: int
+    containers_stopped: int
+    containers_paused: int
+    images: int
+    cgroup_driver: Optional[str] = None
+    swarm_active: bool = False
+
+
+class PortainerEndpoint(BaseModel):
+    """Endpoint definido en Portainer."""
+
+    id: int
+    name: str
+    status: str
+    url: Optional[str] = None
+    group_id: Optional[int] = None
+
+
+class PortainerStack(BaseModel):
+    """Stack gestionado por Portainer."""
+
+    id: int
+    name: str
+    endpoint_id: int
+    status: Optional[str] = None
+    created: Optional[int] = None
+    updated: Optional[int] = None
+    project_path: Optional[str] = None
 
 class ServiceStatusRequest(BaseModel):
     """Request payload for getting multiple service statuses."""

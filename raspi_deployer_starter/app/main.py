@@ -48,6 +48,8 @@ from .system_ops import collect_host_info, poweroff, reboot
 from . import ssh_ws
 from . import ai_analyzer
 from . import devices_api
+from . import docker_api
+from . import portainer_api
 
 # --- Aplicación FastAPI ---
 settings = get_settings()
@@ -70,6 +72,8 @@ app.add_middleware(
 app.include_router(ssh_ws.router, prefix="/ssh", tags=["ssh"])
 app.include_router(ai_analyzer.router, prefix="/api/ai", tags=["ai"])
 app.include_router(devices_api.router, prefix="/api") # Maneja /api/devices
+app.include_router(docker_api.router, prefix="/api")
+app.include_router(portainer_api.router, prefix="/api")
 
 
 
