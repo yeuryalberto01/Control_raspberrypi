@@ -15,7 +15,6 @@ from tkinter import messagebox
 
 ROOT = Path(__file__).resolve().parent
 LAUNCHER = ROOT / "launcher.py"
-LOG_DIR = ROOT / "logs"
 
 
 def run_launcher_command(args: list[str]) -> tuple[int, str]:
@@ -39,9 +38,11 @@ class LauncherGUI(tk.Tk):
         self.geometry("420x360")
         self.resizable(False, False)
 
+        self.mode_var = tk.StringVar(value="local")
         self.status_var = tk.StringVar(value="Estado: desconocido")
         self.log_text = tk.Text(self, height=10, state="disabled")
 
+        self.mode_var.trace_add("write", lambda *_: self._on_mode_changed())
         self._build_widgets()
         self.refresh_status()
         self.refresh_logs()
@@ -55,13 +56,13 @@ class LauncherGUI(tk.Tk):
             btn_frame,
             text="Iniciar Backend",
             width=18,
-            command=lambda: self.run_async(["start", "backend"]),
+            command=lambda: self.run_async_with_mode(["start", "backend"]),
         ).grid(row=0, column=0, padx=5, pady=5)
         tk.Button(
             btn_frame,
             text="Detener Backend",
             width=18,
-            command=lambda: self.run_async(["stop", "backend"]),
+            command=lambda: self.run_async_with_mode(["stop", "backend"]),
         ).grid(row=0, column=1, padx=5, pady=5)
         tk.Button(
             btn_frame,
@@ -75,6 +76,21 @@ class LauncherGUI(tk.Tk):
             width=18,
             command=lambda: self.run_async(["stop", "frontend"]),
         ).grid(row=1, column=1, padx=5, pady=5)
+
+        mode_frame = tk.LabelFrame(self, text="Modo backend")
+        mode_frame.pack(fill="x", padx=12, pady=(0, 10))
+        tk.Radiobutton(
+            mode_frame,
+            text="Local (uvicorn)",
+            value="local",
+            variable=self.mode_var,
+        ).pack(side="left", padx=8, pady=4)
+        tk.Radiobutton(
+            mode_frame,
+            text="Docker (compose)",
+            value="docker",
+            variable=self.mode_var,
+        ).pack(side="left", padx=8, pady=4)
         tk.Button(
             btn_frame,
             text="Actualizar estado",
@@ -109,6 +125,10 @@ class LauncherGUI(tk.Tk):
         """Execute launcher commands without blocking the UI."""
         threading.Thread(target=self._run_and_report, args=(args,), daemon=True).start()
 
+    def run_async_with_mode(self, args: list[str]) -> None:
+        """Append the currently selected mode to the launcher command."""
+        self.run_async([*args, "--mode", self.mode_var.get()])
+
     def _run_and_report(self, args: list[str]) -> None:
         """Run the launcher command in a worker thread."""
         rc, output = run_launcher_command(args)
@@ -139,26 +159,25 @@ class LauncherGUI(tk.Tk):
 
     def refresh_status(self) -> None:
         """Update the status label with the latest launcher output."""
-        rc, output = run_launcher_command(["status"])
+        rc, output = run_launcher_command(["status", "--mode", self.mode_var.get()])
         if rc == 0:
             self.status_var.set(output.replace("\n", " | "))
         else:
             self.status_var.set("Error al consultar estado")
 
     def refresh_logs(self) -> None:
-        """Render the tail of backend.log in the read-only text area."""
-        LOG_DIR.mkdir(exist_ok=True)
-        log_path = LOG_DIR / "backend.log"
-        text = ""
-        if log_path.exists():
-            try:
-                text = "\n".join(log_path.read_text(errors="ignore").splitlines()[-50:])
-            except OSError:
-                text = "(No se pudo leer backend.log)"
+        """Render backend logs (local or docker) in the read-only text area."""
+        rc, output = run_launcher_command(["logs", "backend", "--lines", "50", "--mode", self.mode_var.get()])
+        text = output if rc == 0 else "(No se pudieron obtener los logs)"
         self.log_text.config(state="normal")
         self.log_text.delete("1.0", tk.END)
         self.log_text.insert(tk.END, text or "Sin logs por ahora...")
         self.log_text.config(state="disabled")
+
+    def _on_mode_changed(self) -> None:
+        """Refresh status/logs whenever the execution mode toggles."""
+        self.refresh_status()
+        self.refresh_logs()
 
 
 def main() -> None:

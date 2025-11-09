@@ -181,6 +181,19 @@ _LOCAL_NET_SNAPSHOT: Optional[_NetSnapshot] = None
 _PROCESS_SAMPLE_INTERVAL = 0.15
 
 
+@dataclass
+class _ProcessSnapshot:
+    timestamp: float
+    process_count: int
+    top_cpu: List[ProcessMetric]
+    top_mem: List[ProcessMetric]
+    limit: int
+
+
+_PROCESS_SNAPSHOT: Optional[_ProcessSnapshot] = None
+_PROCESS_SNAPSHOT_TTL = 2.0
+
+
 def _bytes_to_mb(value: int) -> int:
     return int(value / (1024**2))
 
@@ -220,7 +233,8 @@ def _read_local_network_rates() -> Tuple[float, float]:
     return max(rx_kbps, 0.0), max(tx_kbps, 0.0)
 
 
-def _collect_top_processes_local(limit: int = 5) -> Tuple[List[ProcessMetric], List[ProcessMetric]]:
+def _collect_top_processes_local(limit: int = 5) -> Tuple[List[ProcessMetric], List[ProcessMetric], int]:
+    process_count = len(psutil.pids())
     processes: Dict[int, Dict[str, object]] = {}
     for proc in psutil.process_iter(attrs=["pid", "name", "memory_percent"]):
         try:
@@ -257,7 +271,32 @@ def _collect_top_processes_local(limit: int = 5) -> Tuple[List[ProcessMetric], L
 
     top_cpu = sorted(metrics, key=lambda item: item.cpu_percent, reverse=True)[:limit]
     top_mem = sorted(metrics, key=lambda item: item.mem_percent, reverse=True)[:limit]
-    return top_cpu, top_mem
+    return top_cpu, top_mem, process_count
+
+
+def _get_local_process_snapshot(limit: int = 5) -> Tuple[int, List[ProcessMetric], List[ProcessMetric]]:
+    """
+    Returns cached process metrics to avoid sampling psutil repeatedly across requests.
+    """
+    global _PROCESS_SNAPSHOT
+    now = time.monotonic()
+    snapshot = _PROCESS_SNAPSHOT
+    if snapshot and (now - snapshot.timestamp) < _PROCESS_SNAPSHOT_TTL and limit <= snapshot.limit:
+        return (
+            snapshot.process_count,
+            snapshot.top_cpu[:limit],
+            snapshot.top_mem[:limit],
+        )
+
+    top_cpu, top_mem, process_count = _collect_top_processes_local(limit)
+    _PROCESS_SNAPSHOT = _ProcessSnapshot(
+        timestamp=now,
+        process_count=process_count,
+        top_cpu=top_cpu,
+        top_mem=top_mem,
+        limit=limit,
+    )
+    return process_count, top_cpu, top_mem
 
 
 def collect_metrics() -> Metrics:
@@ -268,9 +307,8 @@ def collect_metrics() -> Metrics:
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
     swap = psutil.swap_memory()
-    process_count = len(psutil.pids())
     net_rx_kbps, net_tx_kbps = _read_local_network_rates()
-    top_cpu, top_mem = _collect_top_processes_local()
+    process_count, top_cpu, top_mem = _get_local_process_snapshot()
     cpu_temp, gpu_temp, extra_temps = _read_temperatures()
     fan_speed = _read_fan_speed()
     disk_partitions = _collect_disk_partitions()

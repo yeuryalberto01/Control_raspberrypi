@@ -37,7 +37,10 @@ class Device(DeviceBase):
 class DeviceCreate(DeviceBase):
     """Modelo para crear un nuevo dispositivo. La clave es obligatoria."""
 
-    ssh_pass: str = Field(..., description="Clave SSH para el dispositivo.")
+    ssh_pass: Optional[str] = Field(
+        None,
+        description="Clave SSH para el dispositivo. Opcional si se manejarán llaves o será agregado más tarde.",
+    )
 
 
 class DeviceRegistry(BaseModel):
@@ -337,6 +340,14 @@ class HostInfo(BaseModel):
     ip: str
     arch: str
     kernel: str
+    os_name: str = Field(..., description="Nombre del sistema operativo detectado (platform.system()).")
+    distro: Optional[str] = Field(None, description="Nombre descriptivo de la distribución/SO si está disponible.")
+    device_family: str = Field(..., description="Clasificación del dispositivo (raspberry_pi, windows, linux, etc).")
+    is_raspberry_pi: bool = Field(False, description="Indica si se identificó como Raspberry Pi.")
+    metrics_capabilities: List[str] = Field(
+        default_factory=list,
+        description="Fuentes/herramientas disponibles para leer el rendimiento del sistema.",
+    )
     uptime_seconds: int
 
 

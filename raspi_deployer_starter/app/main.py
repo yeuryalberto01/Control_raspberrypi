@@ -50,6 +50,7 @@ from . import ai_analyzer
 from . import devices_api
 from . import docker_api
 from . import portainer_api
+from . import registry_api
 
 # --- Aplicación FastAPI ---
 settings = get_settings()
@@ -74,6 +75,7 @@ app.include_router(ai_analyzer.router, prefix="/api/ai", tags=["ai"])
 app.include_router(devices_api.router, prefix="/api") # Maneja /api/devices
 app.include_router(docker_api.router, prefix="/api")
 app.include_router(portainer_api.router, prefix="/api")
+app.include_router(registry_api.router)
 
 
 
@@ -259,7 +261,7 @@ async def health_check() -> Dict[str, Any]:
     tags=["system"],
 )
 async def get_host_info(
-    # _: AuthContext = Depends(require_role("readonly")),
+    _: AuthContext = Depends(require_role("readonly")),
 ) -> HostInfo:
     """Devuelve informacion esencial del host."""
     return collect_host_info()
@@ -271,7 +273,7 @@ async def get_host_info(
     tags=["system"],
 )
 async def get_metrics(
-    # _: AuthContext = Depends(require_role("readonly")),
+    _: AuthContext = Depends(require_role("readonly")),
 ) -> Metrics:
     """Recoge metricas basicas del sistema."""
     return collect_metrics()

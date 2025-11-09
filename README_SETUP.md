@@ -77,6 +77,24 @@ pip install -r raspi_deployer_starter\examples\fastapi_demo\requirements.txt
 uvicorn raspi_deployer_starter.app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+### Ejecutar el backend en modo local o Docker
+- **Modo local (desarrollo / pruebas rápidas)**  
+  ```powershell
+  # Usa procesos normales desde el launcher
+  python launcher.py start backend --mode local --host 0.0.0.0 --port 8000
+  ```
+  Puedes ver el estado/logs con `python launcher.py status --mode local` y `python launcher.py logs backend --mode local`.
+
+- **Modo Docker (producción / Raspberry Pi)**  
+  ```powershell
+  # Requiere Docker + Docker Compose instalados en la Pi
+  python launcher.py start backend --mode docker
+  ```
+  El launcher invoca `docker compose` usando `docker-compose.yml`, por lo que también puedes detenerlo con
+  `python launcher.py stop backend --mode docker`.  
+  La nueva GUI (`launcher_gui.py`) incluye un selector “Modo backend” para alternar entre Local y Docker al
+  iniciar/detener servicios y al consultar estado/logs.
+
 ### 2. Escanear Red en Busca de Raspberry Pi
 ```powershell
 # Opción automática

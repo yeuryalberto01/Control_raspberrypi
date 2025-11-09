@@ -44,7 +44,7 @@ def _save_registry(registry: DeviceRegistry) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as handler:
         # Dump the model as a dictionary, excluding unset fields
-        data = registry.model_dump(exclude_unset=True)
+        data = registry.model_dump()
         yaml.safe_dump(data, handler, allow_unicode=True, sort_keys=False)
 
 
